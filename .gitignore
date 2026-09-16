@@ -1,0 +1,33 @@
+# 本地/工具产生的文件
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+*~
+
+# 系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 运行产物（使用技能时产生的中间文件，不属于技能本体）
+analysis/
+frames/
+subs/
+audio/
+meta/
+out/
+*.log
+plan.json
+timemap.json
+subtitle_asset.*
+description_sheet.*
+产出物清单.md
+交付说明.md
