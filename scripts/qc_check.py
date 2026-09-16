@@ -269,6 +269,21 @@ def check_dialogue(path):
     # --- 对白唯一性 ---
     all_d = []
     for i, b in enumerate(blocks, 1):
+        # <Audio N> 也按本段 AUDIO_INSTRUCTION 的槽位顺序编号，同样不能越界
+        m2 = re.search(r'===AUDIO_INSTRUCTION===\s*\n(\{[^\n]+\})', b)
+        if m2:
+            try:
+                n_aud = len(json.loads(m2.group(1)).get("slots", []))
+                ua = [int(x) for x in re.findall(r"<Audio\s+(\d+)>", b)]
+                ova = sorted({u for u in ua if u > n_aud})
+                if ova:
+                    bad_audio.append((i, ova, n_aud))
+                # 用了音色参考，summary 的任务类型标记就必须体现出来
+                mt = re.search(r"summary:\s*\n(\[[^\]]+\])", b)
+                if n_aud and mt and "audio reference" not in mt.group(1):
+                    bad_tag.append((i, mt.group(1)))
+            except Exception:
+                pass
         for _lang, t in re.findall(r"<d>\[([A-Za-z]+)\]\s*(.*?)</d>", b, re.S):
             all_d.append((i, t.strip()))
     if not all_d:
@@ -327,6 +342,7 @@ def check_prompt_spec(path):
     ok(gate, "提示词 %d 段" % len(blocks))
 
     bad_order, bad_cjk, bad_pic, no_spk = [], [], [], []
+    bad_audio, bad_tag = [], []
     all_d = []
     for i, b in enumerate(blocks, 1):
         pos = [b.find(s + ":") for s in SECTIONS]
@@ -359,6 +375,21 @@ def check_prompt_spec(path):
                     bad_pic.append((i, over, n_slot))
             except Exception:
                 pass
+        # <Audio N> 也按本段 AUDIO_INSTRUCTION 的槽位顺序编号，同样不能越界
+        m2 = re.search(r'===AUDIO_INSTRUCTION===\s*\n(\{[^\n]+\})', b)
+        if m2:
+            try:
+                n_aud = len(json.loads(m2.group(1)).get("slots", []))
+                ua = [int(x) for x in re.findall(r"<Audio\s+(\d+)>", b)]
+                ova = sorted({u for u in ua if u > n_aud})
+                if ova:
+                    bad_audio.append((i, ova, n_aud))
+                # 用了音色参考，summary 的任务类型标记就必须体现出来
+                mt = re.search(r"summary:\s*\n(\[[^\]]+\])", b)
+                if n_aud and mt and "audio reference" not in mt.group(1):
+                    bad_tag.append((i, mt.group(1)))
+            except Exception:
+                pass
         for _lang, t in re.findall(r"<d>\[([A-Za-z]+)\]\s*(.*?)</d>", b, re.S):
             all_d.append((i, t.strip()))
         if "<d>" in b and not re.search(r"\(S\d+\)", b):
@@ -381,6 +412,18 @@ def check_prompt_spec(path):
                  % (i, over, n))
     else:
         ok(gate, "<Picture N> 编号均未越界")
+    if bad_audio:
+        for i, ova, n in bad_audio:
+            fail(gate, "段%02d 的 <Audio N> 越界：用到 %s，但 AUDIO_INSTRUCTION 只有 %d 个槽位"
+                 % (i, ova, n))
+    else:
+        ok(gate, "<Audio N> 编号均未越界")
+    if bad_tag:
+        for i, tag in bad_tag:
+            fail(gate, "段%02d 声明了音色参考槽位，但 summary 的任务类型标记没体现：%s"
+                 "（应为「[reference generation + keyframe completion + audio reference]」）" % (i, tag))
+    else:
+        ok(gate, "summary 任务类型标记与音色参考使用情况一致")
     if no_spk:
         warn(gate, "有 %d 段写了 <d> 对白但没给说话人 (Sx)：%s" % (len(no_spk), no_spk))
     elif all_d:
