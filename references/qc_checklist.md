@@ -245,6 +245,32 @@ python scripts/qc_check.py --prompt prompts/H3提示词_EN.txt
 > 注意：`**时长**` / `**场景**` / `**动作描述**` 与 `slots` 里的槽位名是封装工具的**中文结构标记**，
 > 本来就该是中文——核验器只检查六个 section 内部，不要把它们误判成违规。
 
+#### ⚠️ 台词是「**词句逐字保留 + 标点标准化**」，不是"连标点也不能动"
+
+官方 `ref-en.txt` §5.4 同时要求两件事，**很容易被读成一件**：
+
+> …preserve the exact **source words and original language** inside `<d>` …
+> **Standardize punctuation** to the basic written marks needed to express the sentence,
+> such as `,`, `.`, `?`, and `!`; **remove repeated tildes**, emoji, bullets, and repeated or
+> **decorative punctuation**. End complete statements, questions, and exclamations with
+> `.`, `?`, or `!`…
+
+| 要保留 | 要标准化 |
+|---|---|
+| **词句本身**（一个字都不能多、不能少、不能改） | **装饰性标点**：波浪号 `~`、emoji、重复标点 |
+| **语言**（中文台词仍是中文） | **句末终止标点**：陈述 `。`／疑问 `？`／感叹 `！` |
+| **中文的标准书写标点**（`，。？！` 是这个语言的标准标点，**不是装饰**，保留） | |
+
+**实测教训**：曾把"逐字一致"误读成"连标点也不能动"，于是把官方要求的标准化又改回了源字幕的原始标点
+（把「我考虑真周到.」改回「我考虑真周到~」）。方向反了。
+
+**正确的验收方式**：比对时**剥掉标点只比词句**——
+「字幕`我考虑真周到~`」与「`<d>` 内`我考虑真周到.`」**词句一致就是通过**；
+反过来若 `<d>` 里出现源字幕没有的字（或缺字），才是 FAIL。
+
+> 字幕文件（`.ass`）里**仍然用源片原始文本**（含波浪号）—— 那是给观众看的、要与原片一致；
+> 而提示词里的 `<d>` 是给模型念的、要按官方规范标准化。**两者本就该不同，不要强行同步。**
+
 #### ⚠️ 自动化查不出来的那一类：**编号指向的资产对不对**
 
 `<Picture N>` / `<Audio N>` 的**越界**能自动查，但**它指向的资产是不是你想要的那个**——
