@@ -223,23 +223,33 @@ def main() -> int:
     ap.add_argument("--out")
     args = ap.parse_args()
 
-    if args.video:
-        if not os.path.exists(args.video):
-            print("video not found: %s" % args.video, file=sys.stderr)
-            return 1
-        duration = probe_duration(args.video)
-        cuts = detect_cuts(args.video, args.threshold, args.min_gap)
-    elif args.cuts or args.cuts_file:
+    # --cuts / --cuts-file 优先于自动检测：调用方给出人工核实过的切点时必须用它，
+    # 此时 --video 只用来取时长（早期版本这里让 --video 分支先命中，
+    # 导致同时传 --video 与 --cuts 时切点被静默丢弃）。
+    if args.cuts or args.cuts_file:
         if args.cuts_file:
             with open(args.cuts_file, encoding="utf-8") as fh:
                 cuts = [float(x) for x in re.findall(r"[0-9.]+", fh.read())]
         else:
             cuts = [float(x) for x in re.findall(r"[0-9.]+", args.cuts)]
-        if not args.duration:
-            print("--duration is required with --cuts/--cuts-file", file=sys.stderr)
+        if args.video:
+            if not os.path.exists(args.video):
+                print("video not found: %s" % args.video, file=sys.stderr)
+                return 1
+            duration = probe_duration(args.video)
+        elif args.duration:
+            duration = args.duration
+        else:
+            print("--duration (or --video) is required with --cuts/--cuts-file", file=sys.stderr)
             return 1
-        duration = args.duration
         cuts = sorted(c for c in cuts if 0 < c < duration)
+        print("cuts source          : 显式给出（%d 个切点，未做自动检测）" % len(cuts))
+    elif args.video:
+        if not os.path.exists(args.video):
+            print("video not found: %s" % args.video, file=sys.stderr)
+            return 1
+        duration = probe_duration(args.video)
+        cuts = detect_cuts(args.video, args.threshold, args.min_gap)
     else:
         ap.print_help()
         return 1

@@ -67,9 +67,11 @@ def probe_size(video):
 
 
 def grab(video, t, out, width=420):
+    """抽一帧。请求时间超出视频长度时 ffmpeg 返回成功但不写文件——
+    所以这里以「文件是否真的生成」为准，失败返回 None，由调用方跳过。"""
     subprocess.run([which("ffmpeg"), "-y", "-v", "error", "-ss", f"{max(0.0, t):.3f}",
-                    "-i", video, "-frames:v", "1", "-vf", f"scale={width}:-2", out], check=True)
-    return out
+                    "-i", video, "-frames:v", "1", "-vf", f"scale={width}:-2", out], check=False)
+    return out if os.path.exists(out) and os.path.getsize(out) > 0 else None
 
 
 def load_font(size=22):
@@ -83,7 +85,12 @@ def load_font(size=22):
 
 
 def make_strip(paths, labels, out_path, font=None, pad=4, label_h=30):
-    """横向拼一条，每格下方标注时间码。"""
+    """横向拼一条，每格下方标注时间码。缺失的帧（抽帧越界等）直接跳过。"""
+    pairs = [(p, l) for p, l in zip(paths, labels) if p and os.path.exists(p)]
+    if not pairs:
+        return False
+    paths = [p for p, _ in pairs]
+    labels = [l for _, l in pairs]
     imgs = [Image.open(p).convert("RGB") for p in paths]
     if not imgs:
         return False
@@ -211,7 +218,9 @@ def main() -> int:
             paths, labels = [], []
             for k, t in enumerate(ts):
                 p = os.path.join(tmp, f"d{n:03d}_{k}.png")
-                grab(args.video, t, p, args.width)
+                if not grab(args.video, t, p, args.width):
+                    print("  跳过越界帧：对白 #%d @ %.2fs（视频长 %.2fs）" % (n, t, dur), file=sys.stderr)
+                    continue
                 paths.append(p)
                 labels.append(f"#{n}  {t:.2f}s")
             strip = os.path.join(ddir, f"dlg_{n:03d}.png")

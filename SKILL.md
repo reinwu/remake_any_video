@@ -375,6 +375,7 @@ python scripts/qc_check.py --analysis ./analysis --plan plan.json --script 剧�
 - `references/output_templates.md` —— 第七步产出交付物时查，三份东西的完整模板 + 一个从头到尾跑
   通的范例
 - `references/voice_consistency.md` —— 有声角色必查：音色为什么会跨段漂移、`<Audio N>` 音色参考怎么挂、两个必避的坑（`<Subject N>` 不一定是 S1/S2；说话人标记常在前一句里）、核验指标与判断阈值
+- `references/text_free_references.md` —— **G2 资产库门必查**：参考图里的烧录字幕/常驻标题会被模型照抄成乱码。怎么用坐标网格量准文字范围、用邻域内容糊掉、后期再用同一个 .ass 把标题加回来，以及"对静图测字幕永远只显示第一条"这个坑
 - `references/qc_checklist.md` —— 每道工序产出后查：G0~G7 门禁的逐项检查内容、判定阈值、
   不合格的处置建议，以及效率守则与快速止损信号
 - `scripts/build_manifest.py` —— **提交生成之前**用它产出 `产出物清单.md`：把所有输入产出
