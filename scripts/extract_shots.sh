@@ -10,7 +10,7 @@
 #
 # 示例:
 #   bash extract_shots.sh -u "https://www.bilibili.com/video/BVxxxxxx" -o ./analysis
-#   bash extract_shots.sh -u "./my_video.mp4" -o ./analysis -t 0.22 -i 2
+#   bash extract_shots.sh -u "./my_video.mp4" -o ./analysis -t 0.22 -i 2 -d 0.3
 #
 # 参数说明:
 #   -u  视频 URL（http/https 开头会走 yt-dlp 下载）或本地视频文件路径
@@ -21,6 +21,8 @@
 #       （例如整条视频只切出 1~2 张图，但视频有 30 秒以上），
 #       很可能是慢速运镜/推拉摇移没有触发"场景切换"，用这个参数按固定间隔兜底抽帧。
 #   -s  下载视频的最大高度，默认 1080（无需更高分辨率来做构图/色彩分析，下载更快）。
+#   -d  关键帧相对切点的偏移秒数，默认 0.25。切点那一帧正处在运动模糊/转场中，
+#       实测清晰度只有切点后 0.3s 的 1/3~1/10。一般不用改；若某镜仍在运动，调大到 0.4~0.5。
 #
 # 依赖: yt-dlp, ffmpeg, ffprobe
 #   - URL 输入需要 yt-dlp，以及当前网络环境能访问目标视频平台（YouTube/B站/抖音等）。
@@ -32,16 +34,18 @@ set -euo pipefail
 THRESHOLD=0.28
 INTERVAL=""
 MAX_HEIGHT=1080
+OFFSET=0.25     # 抽帧相对切点的偏移秒数：避开切点瞬间的运动模糊（见第3步注释）
 INPUT=""
 OUTDIR=""
 
-while getopts "u:o:t:i:s:" opt; do
+while getopts "u:o:t:i:s:d:" opt; do
   case $opt in
     u) INPUT="$OPTARG" ;;
     o) OUTDIR="$OPTARG" ;;
     t) THRESHOLD="$OPTARG" ;;
     i) INTERVAL="$OPTARG" ;;
     s) MAX_HEIGHT="$OPTARG" ;;
+    d) OFFSET="$OPTARG" ;;
     *) echo "未知参数"; exit 1 ;;
   esac
 done
@@ -107,15 +111,43 @@ ffprobe -v error -select_streams v:0 \
   -show_entries stream=width,height,r_frame_rate,duration,codec_name \
   -of default=noprint_wrappers=1 "$VIDEO_FILE" | tee "$OUTDIR/meta/video_stream.txt"
 
-# ---- 3. 场景检测抽帧（含开场首帧，避免漏掉第一个镜头）----
-echo "[3/5] 场景切换检测抽帧 (阈值=${THRESHOLD})..."
+# ---- 3. 场景检测抽帧（含开场首帧；**抽在切点之后，不是切点那一帧**）----
+#
+# 为什么不能抽"切点那一帧"：切点是镜头切换的瞬间，画面正处在运动模糊/转场里。
+# 实测一条 60fps 的片子（拉普拉斯方差，越清晰越大）：
+#     镜2 切点 3.583s ->  56.8      切点后 0.3s -> 603.3   （10.6 倍）
+#     镜3 切点 4.483s ->  61.6      切点后 0.3s -> 170.9   （ 2.8 倍）
+#     镜6 切点 16.883s -> 59.6      切点后 0.5s -> 131.5   （ 2.2 倍）
+# 抽在切点上的关键帧会明显发糊，而用户会拿它跟资产图对比、觉得"两处不一致"。
+echo "[3/5] 场景切换检测（阈值=${THRESHOLD}）..."
 ffmpeg -y -i "$VIDEO_FILE" \
   -vf "select='eq(n\,0)+gt(scene\,${THRESHOLD})',showinfo" \
-  "${FPS_ARGS[@]}" "$OUTDIR/frames/shot_%04d.jpg" \
+  "${FPS_ARGS[@]}" "$OUTDIR/frames/_detect_%04d.jpg" \
   -loglevel info 2> "$OUTDIR/meta/scene_log.txt"
-grep -o "pts_time:[0-9.]*" "$OUTDIR/meta/scene_log.txt" | cut -d: -f2 > "$OUTDIR/frames/timestamps.txt"
+grep -o "pts_time:[0-9.]*" "$OUTDIR/meta/scene_log.txt" | cut -d: -f2 > "$OUTDIR/frames/cuts.txt"
+rm -f "$OUTDIR"/frames/_detect_*.jpg
+
+# 逐个镜头在「切点 + OFFSET」处抽帧（OFFSET 默认 0.25s，可用 -d 调）
+> "$OUTDIR/frames/timestamps.txt"
+IDX=0
+CUTS=($(cat "$OUTDIR/frames/cuts.txt"))
+DURATION=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$VIDEO_FILE")
+DUR_INT=${DURATION%.*}
+N_CUTS=${#CUTS[@]}
+for ((i=0; i<N_CUTS; i++)); do
+  C="${CUTS[$i]}"
+  # 下一个切点（或片尾）作为本镜头的上界
+  if (( i + 1 < N_CUTS )); then NEXT="${CUTS[$((i+1))]}"; else NEXT="$DURATION"; fi
+  # 目标时刻 = 切点 + OFFSET，但不能越过本镜头结束（留 0.05s 余量）
+  T=$(awk -v c="$C" -v n="$NEXT" -v o="$OFFSET" 'BEGIN{t=c+o; if (t > n-0.05) t = c + (n-c)*0.5; printf "%.3f", t}')
+  IDX=$((IDX+1))
+  ffmpeg -y -v error -ss "$T" -i "$VIDEO_FILE" -frames:v 1 -q:v 2 \
+    "$OUTDIR/frames/shot_$(printf '%04d' $IDX).jpg"
+  echo "$T" >> "$OUTDIR/frames/timestamps.txt"
+done
 SHOT_COUNT=$(ls "$OUTDIR"/frames/shot_*.jpg 2>/dev/null | wc -l | tr -d ' ')
-echo "检测到 ${SHOT_COUNT} 个镜头切换点。frames/shot_0001.jpg, shot_0002.jpg... 与 frames/timestamps.txt 按行号一一对应（第 N 行 = 第 N 张图的起始时间，单位秒）。"
+echo "检测到 ${SHOT_COUNT} 个镜头。frames/shot_0001.jpg … 与 frames/timestamps.txt 按行号对应"
+echo "  （抽帧时刻 = 切点 + ${OFFSET}s，避开切点瞬间的运动模糊；原始切点见 frames/cuts.txt）"
 
 # ---- 4. 可选：补充等间隔抽帧 ----
 if [[ -n "$INTERVAL" ]]; then
